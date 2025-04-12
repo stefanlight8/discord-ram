@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "discord-ram"
+version = "0.1.0"
+description = "A static-typed, fully asynchronous and flexible Discord API framework for Python 3."
+readme = "README.md"
+authors = [
+  { name = "stefanlight8", email = "64615032+stefanlight8@users.noreply.github.com" }
+]
+license = { file = "LICENSE" }
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "aiohttp>=3.10.11",
+  "msgspec>=0.18.4",
+]
+classifiers = [
+  "Topic :: Software Development :: Libraries",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Framework :: AsyncIO",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Typing :: Typed"
+]
+keywords = ["discord", "framework"]
+
+[project.urls]
+"Repository" = "https://github.com/stefanlight8/discord-ram"
+"Issue Tracker" = "https://github.com/stefanlight8/discord-ram/issues"
+"CI" = "https://github.com/stefanlight8/discord-ram/actions"
+
+[project.optional-dependencies]
+speedups = [
+  "aiohttp[speedups]>=3.10.11",
+  "uvloop>=0.18.0 ; os_name != 'nt'",
+]
+
+[dependency-groups]
+pyright = ["pyright>=1.1.399"]
+ruff = ["ruff>=0.11.5"]

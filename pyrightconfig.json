@@ -1,0 +1,12 @@
+{
+  "pythonVersion": "3.10",
+  "include": ["src", "examples"],
+  "exclude": [".venv", "**/__pycache__"],
+  "defineConstant": {
+    "DEBUG": true
+  },
+  "reportUnnecessaryTypeIgnoreComment": "error",
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": false,
+  "reportOverlappingOverload": false
+}
