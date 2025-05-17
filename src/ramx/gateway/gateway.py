@@ -8,23 +8,26 @@ import time
 from collections.abc import Sequence
 from typing import Annotated, Any, Final
 
-import msgspec
 from aiohttp import ClientSession
-from msgspec import Meta, Struct
+from msgspec import Meta, Struct, convert, field
 from yarl import URL
+
+from ramx.users import User
 
 from ._payload import GatewayPayload, OpCode
 from ._transport import GatewayTransport
 
 __all__: Sequence[str] = ("Gateway", "ShardInfo")
 
-LIBRARY_NAME: Final[str] = sys.intern("discord-ram")
+_LIBRARY_NAME: Final[str] = sys.intern("discord-ram")
+
+_READY: Final[str] = sys.intern("READY")
 
 
 class ConnectionProperties(Struct):
-    system: str = msgspec.field(name="os")
-    browser: str
-    device: str
+    system: str = field(name="os")
+    browser: str = _LIBRARY_NAME
+    device: str = _LIBRARY_NAME
 
 
 class ShardInfo(Struct, array_like=True):
@@ -54,40 +57,42 @@ class Gateway:
         large_threshold: int = 50,
         client_session: ClientSession | None = None,
         transport_compression: bool = False,
-        browser: str = LIBRARY_NAME,
+        browser: str = _LIBRARY_NAME,
     ) -> None:
-        self._client_session: ClientSession | None = client_session
-        self._transport_compression: bool = transport_compression
-        self._ws: GatewayTransport | None = None
-
-        self._gateway_url: str = url
-        self._resume_gateway_url: str | None = None
-        self._seq: int | None = None
-
-        self._stop_event: asyncio.Event = asyncio.Event()
-
-        self._heartbeat_interval: float = float("NaN")
-        self._last_heartbeat_ack: float = float("NaN")
-        self._last_heartbeat_sent: float = float("NaN")
-
-        self._token: str = token
-        self._browser: str = browser
-
-        self.intents: int = 0
+        if shard_id is not None:
+            self._logger = self._logger.getChild(str(shard_id))
 
         self.shard_id: int | None = shard_id
         self.shard_count: int | None = shard_count
 
         self.large_threshold: int = large_threshold
 
-        if self.shard_info:
-            self._logger = self._logger.getChild(str(self.shard_id))
+        self.intents: int = 0
+
+        self._token: str = token
+
+        self._client_session: ClientSession | None = client_session
+        self._transport_compression: bool = transport_compression
+        self._gateway_url: str = url
+        self._resume_gateway_url: str | None = None
+        self._ws: GatewayTransport | None = None
+        self._session_id: str | None = None
+        self._seq: int | None = None
+        self._heartbeat_interval: float = float("nan")
+        self._last_heartbeat_ack: float = float("nan")
+        self._last_heartbeat_sent: float = float("nan")
+        self._user: User | None = None
+        self._user_id: int | None = None  # TODO: Snowflake
+
+        self._stop_event: asyncio.Event = asyncio.Event()
+
+        self._browser: str = browser
 
     @property
     def _identify(self) -> Identify:
         return Identify(
             token=self._token,
-            properties=ConnectionProperties(system=platform.system(), browser=self._browser, device=LIBRARY_NAME),
+            properties=ConnectionProperties(system=platform.system(), browser=self._browser),
             compress=self._transport_compression,
             large_threshold=self.large_threshold,
             shard=self.shard_info,
@@ -126,7 +131,22 @@ class Gateway:
             self._logger.debug("received [op:%s]", payload.op)
             if payload.op == OpCode.DISPATCH:
                 assert payload.s
+                assert payload.d
+
                 self._seq = payload.s
+                if payload.t == _READY:
+                    self._session_id = payload.d["session_id"]
+                    self._resume_gateway_url = payload.d["resume_gateway_url"]
+                    self._user_id = payload.d["user"]["id"]
+                    self._user = convert(payload.d["user"], type=User, strict=False)
+                    self._logger.info(
+                        "ready: %s guilds, %s (ID: %s), session %r on v%s gateway",
+                        len(payload.d["guilds"]),
+                        f"{self._user.username}%s" % (f"#{_}" if (_ := self._user.discriminator) else ""),
+                        self._user_id,
+                        self._session_id,
+                        payload.d["v"],
+                    )
             elif payload.op == OpCode.HEARTBEAT_ACK:
                 now = time.monotonic()
                 self._last_heartbeat_ack = now
@@ -136,7 +156,7 @@ class Gateway:
                 self._logger.error("unknown op code [%s]", payload)
 
     async def connect(self) -> None:
-        url_query: dict[str, Any] = {"v": 10, "encoding": "json"}  # TODO: Replace magic value with variable/argument
+        url_query: dict[str, Any] = {"v": 10, "encoding": "json"}
         if self._transport_compression:
             url_query["compress"] = "zlib-stream"
         self._ws = await GatewayTransport.connect(

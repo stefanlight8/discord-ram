@@ -39,9 +39,9 @@ class GatewayTransport:
         self, connection: ClientWebSocketResponse, exit_stack: AsyncExitStack, *, transport_compression: bool
     ) -> None:
         self.connection: ClientWebSocketResponse = connection
-        self.exit_stack: AsyncExitStack = exit_stack
         self.transport_compression: bool = transport_compression
 
+        self._exit_stack: AsyncExitStack = exit_stack
         self._stop_event: asyncio.Event = asyncio.Event()
 
         self._decoder: json.Decoder = json.Decoder(GatewayPayload)
@@ -51,10 +51,10 @@ class GatewayTransport:
         self._buffer: bytearray = bytearray()
 
     async def send(self, payload: GatewayPayload) -> None:
-        self._logger.debug("send payload [op:%s]", payload.op)
+        self._logger.debug("send payload [%r]", payload)
         await self.connection.send_bytes(data=self._encoder.encode(payload))
 
-    async def receive_stream(self, data: bytes) -> GatewayPayload:
+    async def receive_stream(self, data: memoryview[int] | bytes) -> GatewayPayload:
         assert self._inflator is not None
         self._buffer.extend(data)
         while not self._buffer.endswith(ZLIB_SUFFIX):
@@ -67,22 +67,25 @@ class GatewayTransport:
 
     async def receive_payload(self) -> GatewayPayload:
         if self.transport_compression:
-            payload = await self.receive_stream(await self.connection.receive_bytes())
+            data: memoryview[int] = memoryview(await self.connection.receive_bytes())
+            payload = await self.receive_stream(data)
         else:
-            data = await self.connection.receive_str()
-            payload = self._decoder.decode(memoryview(data.encode()))
-        self._logger.debug("received payload [op:%s,s:%s,t:%s]", payload.op, payload.s, payload.t)
+            payload = self._decoder.decode(await self.connection.receive_str())
+        self._logger.debug("received [%r]", payload)
         return payload
 
     async def receive(self) -> typing.AsyncIterator[GatewayPayload]:
         while not self._stop_event.is_set():
             message: WSMessage = await self.connection.receive()
+            if message.type == WSMsgType.ERROR:
+                raise Exception("websocket error", message.extra, message.data)
+
             if message.type == WSMsgType.BINARY and self.transport_compression:
-                yield await self.receive_stream(message.data)
+                payload = await self.receive_stream(message.data)
             elif message.type == WSMsgType.TEXT and not self.transport_compression:
-                payload: GatewayPayload = self._decoder.decode(memoryview(message.data.encode()))
-                yield payload
-            elif message.type == WSMsgType.ERROR:
-                raise Exception("websocket error", message.data, message.extra)
+                payload = self._decoder.decode(message.data)
             else:
-                raise Exception()  # TODO(websocket)(self.send_close): Protocol error
+                raise Exception("unknown message", message)
+
+            self._logger.debug("received [%r]", payload)
+            yield payload
